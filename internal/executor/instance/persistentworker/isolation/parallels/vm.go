@@ -7,9 +7,13 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 )
 
-var ErrVMFailed = errors.New("Parallels VM operation failed")
+var (
+	ErrVMFailed             = errors.New("Parallels VM operation failed")
+	VMRestartDurationToWait = 2 * time.Minute
+)
 
 type VM struct {
 	uuid string
@@ -41,13 +45,7 @@ func NewVMClonedFrom(ctx context.Context, vmNameFrom string) (*VM, error) {
 
 	// Check if VM is packed
 	if strings.HasSuffix(vmInfoFrom.Home, ".pvmp") {
-		// Let's unpack it!
-		_, stderr, err := Prlctl(ctx, "unpack", vmNameFrom)
-		if err != nil {
-			return nil, fmt.Errorf("%w: failed to unpack VM %q: %q", ErrVMFailed, vmNameFrom, firstNonEmptyLine(stderr))
-		}
-		// Update info after unpacking
-		vmInfoFrom, err = retrieveInfo(ctx, vmNameFrom)
+		vmInfoFrom, err = unpackVM(ctx, vmNameFrom, vmInfoFrom)
 		if err != nil {
 			return nil, err
 		}
@@ -58,6 +56,42 @@ func NewVMClonedFrom(ctx context.Context, vmNameFrom string) (*VM, error) {
 	}
 
 	return cloneFromDefault(ctx, vmInfoFrom.Name)
+}
+
+func unpackVM(ctx context.Context, vmNameFrom string, vmInfoFrom *VirtualMachineInfo) (*VirtualMachineInfo, error) {
+	// Let's unpack it!
+	_, stderr, err := Prlctl(ctx, "unpack", vmNameFrom)
+	if err != nil {
+		return nil, fmt.Errorf("%w: failed to unpack VM %q: %q", ErrVMFailed, vmNameFrom, firstNonEmptyLine(stderr))
+	}
+	// Update info after unpacking
+	vmInfoFrom, err = retrieveInfo(ctx, vmNameFrom)
+	if err != nil {
+		return nil, err
+	}
+
+	if vmInfoFrom.State != "suspended" {
+		return vmInfoFrom, nil
+	}
+
+	// VM is suspended and was unpacked which means it was probably packed on another machine and
+	// has never been started on this host. In this situation Parallels has never assigned an IP and
+	// created a DHCP lease record. In order to fix it we need to stop, start and suspend the VM.
+	_, stderr, err = Prlctl(ctx, "stop", vmNameFrom)
+	if err != nil {
+		return nil, fmt.Errorf("%w: failed to stop VM %q: %q", ErrVMFailed, vmNameFrom, firstNonEmptyLine(stderr))
+	}
+	_, stderr, err = Prlctl(ctx, "start", vmNameFrom)
+	if err != nil {
+		return nil, fmt.Errorf("%w: failed to restart VM %q: %q", ErrVMFailed, vmNameFrom, firstNonEmptyLine(stderr))
+	}
+	// todo: find a better way to wait for a VM to boot and start everything.
+	time.Sleep(VMRestartDurationToWait)
+	_, stderr, err = Prlctl(ctx, "suspend", vmNameFrom)
+	if err != nil {
+		return nil, fmt.Errorf("%w: failed to resuspend VM %q: %q", ErrVMFailed, vmNameFrom, firstNonEmptyLine(stderr))
+	}
+	return retrieveInfo(ctx, vmNameFrom)
 }
 
 // Returns an identifier suitable for use in Parallels CLI commands.
