@@ -120,6 +120,7 @@ func TestWorker(t *testing.T) {
 	assert.True(t, workersRPC.TaskWasAssigned)
 	assert.True(t, workersRPC.TaskWasStarted)
 	assert.True(t, workersRPC.TaskWasStopped)
+	assert.False(t, workersRPC.TaskHasFailed)
 
 	assert.Equal(t, []string{"clone", "check"}, tasksRPC.SucceededCommands)
 }

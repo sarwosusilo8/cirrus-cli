@@ -15,6 +15,7 @@ type WorkersRPC struct {
 
 	WorkerWasRegistered bool
 	TaskWasAssigned     bool
+	TaskHasFailed       bool
 	TaskWasStarted      bool
 	TaskWasStopped      bool
 
@@ -62,6 +63,14 @@ func (workersRPC *WorkersRPC) Poll(ctx context.Context, request *api.PollRequest
 func (workersRPC *WorkersRPC) TaskStarted(ctx context.Context, request *api.TaskIdentification) (*empty.Empty, error) {
 	if request.TaskId == taskID {
 		workersRPC.TaskWasStarted = true
+	}
+
+	return &empty.Empty{}, nil
+}
+
+func (workersRPC *WorkersRPC) TaskFailed(ctx context.Context, request *api.TaskFailedRequest) (*empty.Empty, error) {
+	if request.TaskIdentification.TaskId == taskID {
+		workersRPC.TaskHasFailed = true
 	}
 
 	return &empty.Empty{}, nil
